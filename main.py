@@ -1,6 +1,7 @@
 import logging
 import threading
 import os
+import certifi # SSL အတွက် ထည့်သွင်းခြင်း
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, ConversationHandler
@@ -8,9 +9,10 @@ from pymongo import MongoClient
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# Render Variable မှ ဖတ်သည်
+# --- DATABASE ---
 MONGO_URL = os.environ.get("MONGODB_URI")
-client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=10000)
+# tlsCAFile=certifi.where() က SSL handshake error ကို ဖြေရှင်းပေးပါသည်
+client = MongoClient(MONGO_URL, tlsCAFile=certifi.where(), serverSelectionTimeoutMS=10000)
 db = client.get_database('YeeSarSharDB')
 users_col = db['users']
 
@@ -57,12 +59,13 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "age": context.user_data['age'], "city": context.user_data['city'], "photo": photo_id, "seen_users": []
     }
     try:
+        # Database ထဲသို့ data ထည့်ခြင်း
         users_col.update_one({"user_id": user.id}, {"$set": user_data}, upsert=True)
         await update.message.reply_text("✅ မှတ်ပုံတင်ပြီးပါပြီ!\n'🔍 ရှာဖွေမည်' ကို နှိပ်ပါ။",
             reply_markup=ReplyKeyboardMarkup([['🔍 ရှာဖွေမည်']], resize_keyboard=True))
     except Exception as e:
         logging.error(f"DB Error: {e}")
-        await update.message.reply_text("စနစ် ခေတ္တနှေးကွေးနေပါသည်။ ခဏအကြာမှ ပြန်စမ်းကြည့်ပါ။")
+        await update.message.reply_text("စနစ် ခေတ္တနှေးကွေးနေပါသည်။ ခဏအကြာမှ ပုံပြန်ပို့ပေးပါ။")
     return ConversationHandler.END
 
 async def search_people(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -88,4 +91,5 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('start', start)]
     ))
     app.add_handler(MessageHandler(filters.Regex('^(🔍 ရှာဖွေမည်|❤️ Like|👎 Next)$'), search_people))
+    # Conflict ကို ရှင်းလင်းရန် drop_pending_updates=True သုံးသည်
     app.run_polling(drop_pending_updates=True)
