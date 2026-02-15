@@ -1,22 +1,19 @@
- import logging
+import logging
 import threading
 import os
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, ConversationHandler
 from pymongo import MongoClient
-from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# --- LOGGING ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- DATABASE ---
-# Render Environment Variable မှ URI ကို ဖတ်ယူသည်
+# Render Variable မှ ဖတ်သည်
 MONGO_URL = os.environ.get("MONGODB_URI")
 client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=10000)
 db = client.get_database('YeeSarSharDB')
 users_col = db['users']
 
-# --- HEALTH CHECK ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -28,7 +25,6 @@ def run_health_server():
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
-# --- STATES ---
 GENDER, AGE, CITY, PHOTO = range(4)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -66,7 +62,7 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup([['🔍 ရှာဖွေမည်']], resize_keyboard=True))
     except Exception as e:
         logging.error(f"DB Error: {e}")
-        await update.message.reply_text("Database ချိတ်ဆက်မှု အခက်အခဲရှိနေသည်။ Environment Variables များကို ပြန်စစ်ပါ။")
+        await update.message.reply_text("စနစ် ခေတ္တနှေးကွေးနေပါသည်။ ခဏအကြာမှ ပြန်စမ်းကြည့်ပါ။")
     return ConversationHandler.END
 
 async def search_people(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -83,7 +79,6 @@ if __name__ == '__main__':
     threading.Thread(target=run_health_server, daemon=True).start()
     TOKEN = "8529724118:AAFxU42k6oBZq5Fd_09o7jcXGnFnLf2ANNw"
     app = ApplicationBuilder().token(TOKEN).build()
-    
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={GENDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_gender)],
@@ -93,5 +88,4 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('start', start)]
     ))
     app.add_handler(MessageHandler(filters.Regex('^(🔍 ရှာဖွေမည်|❤️ Like|👎 Next)$'), search_people))
-    
     app.run_polling(drop_pending_updates=True)
