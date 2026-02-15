@@ -1,23 +1,22 @@
-import logging
+ import logging
 import threading
 import os
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, ConversationHandler
 from pymongo import MongoClient
-import ssl
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # --- LOGGING ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- DATABASE CONNECTION (အသစ်ပြင်ဆင်ထားသည်) ---
-# SSL error များအတွက် tlsAllowInvalidCertificates ကို အသုံးပြုထားပါသည်
-MONGO_URL = "mongodb+srv://phyohtetaung1091_db_user:EhJoxfniB6uFq9OA@cluster0.nrja3ig.mongodb.net/?retryWrites=true&w=majority"
-client = MongoClient(MONGO_URL, tls=True, tlsAllowInvalidCertificates=True, serverSelectionTimeoutMS=10000)
-db = client['YeeSarSharDB']
+# --- DATABASE ---
+# Render Environment Variable မှ URI ကို ဖတ်ယူသည်
+MONGO_URL = os.environ.get("MONGODB_URI")
+client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=10000)
+db = client.get_database('YeeSarSharDB')
 users_col = db['users']
 
-# --- HEALTH CHECK SERVER ---
+# --- HEALTH CHECK ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -58,37 +57,27 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     photo_id = update.message.photo[-1].file_id
     user_data = {
-        "user_id": user.id,
-        "name": user.first_name,
-        "gender": context.user_data['gender'],
-        "age": context.user_data['age'],
-        "city": context.user_data['city'],
-        "photo": photo_id,
-        "seen_users": []
+        "user_id": user.id, "name": user.first_name, "gender": context.user_data['gender'],
+        "age": context.user_data['age'], "city": context.user_data['city'], "photo": photo_id, "seen_users": []
     }
     try:
-        # Database ချိတ်ဆက်မှုကို အတင်းအကြပ် လုပ်ဆောင်စေခြင်း
         users_col.update_one({"user_id": user.id}, {"$set": user_data}, upsert=True)
         await update.message.reply_text("✅ မှတ်ပုံတင်ပြီးပါပြီ!\n'🔍 ရှာဖွေမည်' ကို နှိပ်ပါ။",
             reply_markup=ReplyKeyboardMarkup([['🔍 ရှာဖွေမည်']], resize_keyboard=True))
     except Exception as e:
         logging.error(f"DB Error: {e}")
-        # Error ဖြစ်ရင်တောင် user ကို စာပြန်အောင် လုပ်ထားပေးသည်
-        await update.message.reply_text("ခေတ္တစောင့်ပေးပါ၊ Database ချိတ်ဆက်မှုကို ပြန်လည်ကြိုးစားနေပါသည်။")
+        await update.message.reply_text("Database ချိတ်ဆက်မှု အခက်အခဲရှိနေသည်။ Environment Variables များကို ပြန်စစ်ပါ။")
     return ConversationHandler.END
 
 async def search_people(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    try:
-        target = list(users_col.aggregate([{"$match": {"user_id": {"$ne": user_id}}}, {"$sample": {"size": 1}}]))
-        if target:
-            t = target[0]
-            await update.message.reply_photo(photo=t['photo'], caption=f"👤 {t['name']}\n🎂 {t['age']}\n📍 {t['city']}", 
-                reply_markup=ReplyKeyboardMarkup([['❤️ Like', '👎 Next']], resize_keyboard=True))
-        else:
-            await update.message.reply_text("လူကုန်သွားပါပြီ။")
-    except Exception:
-        await update.message.reply_text("ရှာဖွေမှု အဆင်မပြေဖြစ်နေပါသည်။")
+    target = list(users_col.aggregate([{"$match": {"user_id": {"$ne": user_id}}}, {"$sample": {"size": 1}}]))
+    if target:
+        t = target[0]
+        await update.message.reply_photo(photo=t['photo'], caption=f"👤 {t['name']}\n🎂 {t['age']}\n📍 {t['city']}", 
+            reply_markup=ReplyKeyboardMarkup([['❤️ Like', '👎 Next']], resize_keyboard=True))
+    else:
+        await update.message.reply_text("လူကုန်သွားပါပြီ။")
 
 if __name__ == '__main__':
     threading.Thread(target=run_health_server, daemon=True).start()
@@ -105,5 +94,4 @@ if __name__ == '__main__':
     ))
     app.add_handler(MessageHandler(filters.Regex('^(🔍 ရှာဖွေမည်|❤️ Like|👎 Next)$'), search_people))
     
-    # Conflict ကို ဖြေရှင်းရန် drop_pending_updates ကို အသုံးပြုသည်
     app.run_polling(drop_pending_updates=True)
