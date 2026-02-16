@@ -12,6 +12,8 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 # Database ချိတ်ဆက်မှု
 MONGO_URL = os.environ.get("MONGODB_URI")
 client = MongoClient(MONGO_URL, tlsCAFile=certifi.where(), serverSelectionTimeoutMS=10000)
+db = client.get_database('YeeSarSharDB')
+users_col = db['users']
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
