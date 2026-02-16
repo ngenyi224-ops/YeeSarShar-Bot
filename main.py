@@ -1,7 +1,6 @@
 import logging
 import threading
 import os
-import certifi
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, ConversationHandler
@@ -10,13 +9,14 @@ from pymongo import MongoClient
 # Logging setup
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# 1. Database Connection (Variables အားလုံး ပါဝင်ပြီးသား)
+# 1. Database Connection (SSL Error ကို ကျော်ဖြတ်ရန် တိုက်ရိုက်ပြင်ဆင်ထားသည်)
 MONGO_URL = os.environ.get("MONGODB_URI")
-client = MongoClient(MONGO_URL, tlsCAFile=certifi.where(), serverSelectionTimeoutMS=10000)
+# tlsAllowInvalidCertificates=True ကို ဒီမှာ တိုက်ရိုက်ထည့်ထားလို့ SSL error မတက်တော့ပါ
+client = MongoClient(MONGO_URL, tlsAllowInvalidCertificates=True, serverSelectionTimeoutMS=10000)
 db = client.get_database('YeeSarSharDB')
 users_col = db['users']
 
-# 2. Render Health Server
+# 2. Render Health Server (Render မှာ ပိတ်မသွားအောင်)
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -54,24 +54,23 @@ async def get_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    photo_id = update.message.photo[-1].file_id
-    user_data = {
-        "user_id": user.id, "name": user.first_name, "gender": context.user_data['gender'],
-        "age": context.user_data['age'], "city": context.user_data['city'], "photo": photo_id
-    }
-    try:
-        # Database ထဲ သိမ်းဆည်းခြင်း
-        users_col.update_one({"user_id": user.id}, {"$set": user_data}, upsert=True)
-        await update.message.reply_text("✅ မှတ်ပုံတင်ပြီးပါပြီ!\n'🔍 ရှာဖွေမည်' ကို နှိပ်ပါ။",
-            reply_markup=ReplyKeyboardMarkup([['🔍 ရှာဖွေမည်']], resize_keyboard=True))
-    except Exception as e:
-        logging.error(f"DB Error: {e}")
-        await update.message.reply_text("ခေတ္တစောင့်ဆိုင်းပါ။ Database နှင့် ချိတ်ဆက်နေပါသည်။")
+    if update.message.photo:
+        photo_id = update.message.photo[-1].file_id
+        user_data = {
+            "user_id": user.id, "name": user.first_name, "gender": context.user_data['gender'],
+            "age": context.user_data['age'], "city": context.user_data['city'], "photo": photo_id
+        }
+        try:
+            users_col.update_one({"user_id": user.id}, {"$set": user_data}, upsert=True)
+            await update.message.reply_text("✅ မှတ်ပုံတင်ပြီးပါပြီ!\n'🔍 ရှာဖွေမည်' ကို နှိပ်ပါ။",
+                reply_markup=ReplyKeyboardMarkup([['🔍 ရှာဖွေမည်']], resize_keyboard=True))
+        except Exception as e:
+            logging.error(f"DB Error: {e}")
+            await update.message.reply_text("ခေတ္တစောင့်ဆိုင်းပါ။ Database နှင့် ချိတ်ဆက်နေပါသည်။")
     return ConversationHandler.END
 
 async def search_people(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    # လူအသစ်များကို ရှာဖွေခြင်း
     target = list(users_col.aggregate([{"$match": {"user_id": {"$ne": user_id}}}, {"$sample": {"size": 1}}]))
     if target:
         t = target[0]
