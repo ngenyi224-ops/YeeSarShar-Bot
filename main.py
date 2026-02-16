@@ -1,95 +1,32 @@
 import logging
-import threading
 import os
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, ConversationHandler
+import certifi
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 from pymongo import MongoClient
 
-# Logging setup
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-
-# 1. Database Connection (SSL Error ကို ကျော်ဖြတ်ရန် တိုက်ရိုက်ပြင်ဆင်ထားသည်)
+# 1. Database Setup (SSL Error အမြစ်ပြတ်ရှင်းရန်)
+ca = certifi.where()
 MONGO_URL = os.environ.get("MONGODB_URI")
-# tlsAllowInvalidCertificates=True ကို ဒီမှာ တိုက်ရိုက်ထည့်ထားလို့ SSL error မတက်တော့ပါ
-client = MongoClient(MONGO_URL, tlsAllowInvalidCertificates=True, serverSelectionTimeoutMS=10000)
+client = MongoClient(MONGO_URL, tlsCAFile=ca, tlsAllowInvalidCertificates=True)
 db = client.get_database('YeeSarSharDB')
 users_col = db['users']
 
-# 2. Render Health Server (Render မှာ ပိတ်မသွားအောင်)
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is Running")
-
-def run_health_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    server.serve_forever()
-
-GENDER, AGE, CITY, PHOTO = range(4)
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🇲🇲 YeeSarShar မှ ကြိုဆိုပါတယ်!\nစတင်ရန် သင်က ဘယ်သူလဲ?",
-        reply_markup=ReplyKeyboardMarkup([['ယောင်္ကျားလေး 👦', 'မိန်းကလေး 👧']], one_time_keyboard=True, resize_keyboard=True)
-    )
-    return GENDER
+    await update.message.reply_text("Bot အလုပ်လုပ်နေပါပြီ။ ဓာတ်ပုံပို့ကြည့်ပါ။")
 
-async def get_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['gender'] = update.message.text
-    await update.message.reply_text("သင့်အသက်ကို ရိုက်ထည့်ပါ။")
-    return AGE
-
-async def get_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['age'] = update.message.text
-    await update.message.reply_text("သင်ဘယ်မြို့မှာ နေပါသလဲ?")
-    return CITY
-
-async def get_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['city'] = update.message.text
-    await update.message.reply_text("သင့်ရဲ့ ဓာတ်ပုံတစ်ပုံ ပို့ပေးပါ။ 📸")
-    return PHOTO
-
-async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.photo:
-        photo_id = update.message.photo[-1].file_id
-        user_data = {
-            "user_id": user.id, "name": user.first_name, "gender": context.user_data['gender'],
-            "age": context.user_data['age'], "city": context.user_data['city'], "photo": photo_id
-        }
         try:
-            users_col.update_one({"user_id": user.id}, {"$set": user_data}, upsert=True)
-            await update.message.reply_text("✅ မှတ်ပုံတင်ပြီးပါပြီ!\n'🔍 ရှာဖွေမည်' ကို နှိပ်ပါ။",
-                reply_markup=ReplyKeyboardMarkup([['🔍 ရှာဖွေမည်']], resize_keyboard=True))
+            # ချိတ်ဆက်မှု ရှိမရှိ အရင်စမ်းမည်
+            client.admin.command('ping') 
+            await update.message.reply_text("✅ Database နှင့် ချိတ်ဆက်မှု အောင်မြင်ပါသည်။")
         except Exception as e:
-            logging.error(f"DB Error: {e}")
-            await update.message.reply_text("ခေတ္တစောင့်ဆိုင်းပါ။ Database နှင့် ချိတ်ဆက်နေပါသည်။")
-    return ConversationHandler.END
-
-async def search_people(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    target = list(users_col.aggregate([{"$match": {"user_id": {"$ne": user_id}}}, {"$sample": {"size": 1}}]))
-    if target:
-        t = target[0]
-        await update.message.reply_photo(photo=t['photo'], caption=f"👤 {t['name']}\n🎂 {t['age']}\n📍 {t['city']}", 
-            reply_markup=ReplyKeyboardMarkup([['❤️ Like', '👎 Next']], resize_keyboard=True))
-    else:
-        await update.message.reply_text("လူကုန်သွားပါပြီ။")
+            await update.message.reply_text(f"❌ DB Error: {str(e)}")
 
 if __name__ == '__main__':
-    threading.Thread(target=run_health_server, daemon=True).start()
     TOKEN = "8529724118:AAFxU42k6oBZq5Fd_09o7jcXGnFnLf2ANNw"
     app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={GENDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_gender)],
-                AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_age)],
-                CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_city)],
-                PHOTO: [MessageHandler(filters.PHOTO, get_photo)]},
-        fallbacks=[CommandHandler('start', start)]
-    ))
-    app.add_handler(MessageHandler(filters.Regex('^(🔍 ရှာဖွေမည်|❤️ Like|👎 Next)$'), search_people))
-    app.run_polling(drop_pending_updates=True)
+    app.add_handler(CommandHandler('start', start))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.run_polling()
