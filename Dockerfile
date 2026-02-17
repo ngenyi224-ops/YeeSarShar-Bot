@@ -1,6 +1,13 @@
 FROM python:3.10-slim
+
 WORKDIR /app
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
 COPY . .
+
+# Flask အတွက် port 8080 ကို ဖွင့်ပေးရန်
+EXPOSE 8080
+
 CMD ["python", "main.py"]
